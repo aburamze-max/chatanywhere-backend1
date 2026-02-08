@@ -3,7 +3,6 @@ import cors from "cors";
 
 const app = express();
 
-// ===== CORS =====
 app.use(
   cors({
     origin: "*",
@@ -14,7 +13,6 @@ app.use(
 
 app.use(express.json({ limit: "2mb" }));
 
-// ===== Health Check =====
 app.get("/", (req, res) => {
   res.json({
     ok: true,
@@ -23,46 +21,67 @@ app.get("/", (req, res) => {
   });
 });
 
-// ===== Proxy Endpoint =====
-app.post("/v1/chat/completions", async (req, res) => {
+function getApiKey() {
+  const apiKey = (process.env.OPENAI_API_KEY || "").trim();
+  if (!apiKey) {
+    const err = new Error("OPENAI_API_KEY is missing in Render Environment Variables");
+    err.status = 500;
+    throw err;
+  }
+  return apiKey;
+}
+
+// ✅ NEW: Models passthrough
+app.get("/v1/models", async (req, res) => {
   try {
-    const apiKey = (process.env.OPENAI_API_KEY || "").trim();
+    const apiKey = getApiKey();
 
-    if (!apiKey) {
-      return res.status(500).json({
-        error: "OPENAI_API_KEY is missing in Render Environment Variables"
-      });
-    }
-
-    const upstreamResp = await fetch(
-      "https://api.chatanywhere.tech/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`
-        },
-        body: JSON.stringify(req.body)
+    const upstreamResp = await fetch("https://api.chatanywhere.tech/v1/models", {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`
       }
-    );
+    });
 
     const text = await upstreamResp.text();
-
     res.status(upstreamResp.status);
+
     try {
       res.json(JSON.parse(text));
     } catch {
       res.send(text);
     }
   } catch (err) {
-    res.status(500).json({
-      error: String(err?.message || err)
-    });
+    res.status(err.status || 500).json({ error: String(err?.message || err) });
   }
 });
 
-// ===== Start Server =====
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log("Server running on port", port);
+// Existing: chat completions passthrough
+app.post("/v1/chat/completions", async (req, res) => {
+  try {
+    const apiKey = getApiKey();
+
+    const upstreamResp = await fetch("https://api.chatanywhere.tech/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(req.body)
+    });
+
+    const text = await upstreamResp.text();
+    res.status(upstreamResp.status);
+
+    try {
+      res.json(JSON.parse(text));
+    } catch {
+      res.send(text);
+    }
+  } catch (err) {
+    res.status(err.status || 500).json({ error: String(err?.message || err) });
+  }
 });
+
+const port = process.env.PORT || 3000;
+app.listen(port, () => console.log("Server running on port", port));
